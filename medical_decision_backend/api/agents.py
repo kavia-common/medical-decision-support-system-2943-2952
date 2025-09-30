@@ -1,6 +1,16 @@
 from typing import Dict, Any, List, Optional
 
-from .utils import redact_phi, detect_red_flags, now_iso
+from .utils import (
+    redact_phi,
+    detect_red_flags,
+    now_iso,
+    extract_fields_from_text,
+    build_acknowledgment,
+    get_suggestions_for_key,
+    get_hints_for_key,
+    build_safety_banner,
+    transcript_tail,
+)
 from .storage import HybridStorage
 from .rag import LocalVectorStore
 
@@ -15,18 +25,27 @@ PATIENT_QUESTIONS = [
     {"key": "allergies", "question": "Any allergies to medications or foods?"},
 ]
 
-
 def _next_question(collected: Dict[str, Any]) -> Optional[Dict[str, str]]:
     for q in PATIENT_QUESTIONS:
         if q["key"] not in collected or not collected[q["key"]]:
             return q
     return None
 
+def _last_agent_question(turns: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    qs = [t for t in turns if t.get("from") == "agent" and t.get("type") == "question"]
+    return qs[-1] if qs else None
 
 class PatientAgent:
     """
     Patient-facing agent that collects structured data through a chat-like interaction.
     Applies PHI redaction and red-flag detection. Persists conversation turns.
+
+    Conversational behavior:
+    - Acknowledges user input referencing previous question.
+    - Extracts multiple fields from a single message where possible.
+    - Adds dynamic safety banner if red-flag terms are detected.
+    - Provides suggestions and hints for the next question.
+    - Returns a richer response payload while keeping legacy fields for backward compatibility.
     """
 
     def __init__(self, storage: HybridStorage):
@@ -36,60 +55,134 @@ class PatientAgent:
     def handle_message(self, session_id: str, message: str) -> Dict[str, Any]:
         """
         Process a user message, update structured fields, and return next prompt.
+
+        Returns both a rich chat payload and legacy keys for compatibility.
         """
-        # Redact PHI
+        # Redact PHI early
         redacted_text, redactions = redact_phi(message)
         red_flags = detect_red_flags(redacted_text)
 
-        # Retrieve current note
-        note = self.storage.get_latest_note(session_id) or {"session_id": session_id, "turns": [], "structured": {}}
+        # Restore latest note state
+        note = self.storage.get_latest_note(session_id) or {
+            "session_id": session_id,
+            "turns": [],
+            "structured": {},
+        }
         note.setdefault("structured", {})
         note.setdefault("turns", [])
-        note["turns"].append({"from": "user", "text": redacted_text, "timestamp": now_iso(), "redactions": redactions})
 
-        # Simple heuristic mapping: if last question asked, capture answer
-        last_turns = [t for t in note["turns"] if t.get("from") == "agent" and t.get("type") == "question"]
-        expected_key = last_turns[-1]["key"] if last_turns else None
-        if expected_key:
-            note["structured"][expected_key] = redacted_text
+        # Persist user turn
+        user_turn = {
+            "from": "user",
+            "type": "message",
+            "text": redacted_text,
+            "timestamp": now_iso(),
+            "redactions": redactions,
+            "red_flags": red_flags,
+        }
+        note["turns"].append(user_turn)
 
+        # Determine expected key from last asked agent question
+        last_q = _last_agent_question(note["turns"])
+        expected_key = last_q.get("key") if last_q else None
+
+        # Multi-field extraction from single user message
+        extracted = extract_fields_from_text(redacted_text, expected_key=expected_key)
+        if extracted:
+            note["structured"].update(extracted)
+
+        # Acknowledge prior answer before asking next
+        ack_text = build_acknowledgment(expected_key, redacted_text)
+
+        # Decide next question (or completion)
         next_q = _next_question(note["structured"])
+
+        # Optional safety banner (display before or alongside next question)
+        safety_payload = build_safety_banner(red_flags)
+
+        display_delay_ms = 550  # micro typing simulation hint for UI
+
         if next_q:
-            agent_msg = {
+            # Compose conversational question with acknowledgment lead-in
+            q_text = f"{ack_text} {next_q['question']}"
+            suggestions = get_suggestions_for_key(next_q["key"])
+            hints = get_hints_for_key(next_q["key"])
+
+            agent_turn = {
                 "from": "agent",
+                "role": "assistant",
                 "type": "question",
+                "text": q_text,
                 "key": next_q["key"],
-                "text": next_q["question"],
                 "timestamp": now_iso(),
+                "suggestions": suggestions or None,
+                "hints": hints,
             }
-            note["turns"].append(agent_msg)
+            # Save the exact question turn for context and key-binding
+            note["turns"].append(agent_turn)
+
+            # Persist the updated note
             self.storage.save_session_note(session_id, note)
-            return {
+
+            # Build transcript tail for context display
+            tail = transcript_tail(note["turns"], n=5)
+
+            # Rich response payload
+            rich = {
+                "agent_turn": agent_turn,
+                "user_turn": user_turn,
+                "transcript_tail": tail,
+                "safety_banner": safety_payload,
+                "display_delay_ms": display_delay_ms,
+            }
+
+            # Legacy-compatible fields
+            legacy = {
                 "session_id": session_id,
-                "message": agent_msg["text"],
+                "message": agent_turn["text"],
                 "next_key": next_q["key"],
                 "red_flags": red_flags,
                 "redactions": redactions,
                 "structured": note["structured"],
                 "complete": False,
             }
+            legacy.update(rich)  # include rich fields at top-level for client ease
+            return legacy
         else:
-            completion_msg = {
+            # Completion flow
+            completion_text = "Thank you. I have collected your basic information."
+            # Acknowledge then close
+            agent_turn = {
                 "from": "agent",
+                "role": "assistant",
                 "type": "completion",
-                "text": "Thank you. I have collected your basic information.",
+                "text": f"{ack_text} {completion_text}",
+                "key": None,
                 "timestamp": now_iso(),
+                "suggestions": None,
+                "hints": None,
             }
-            note["turns"].append(completion_msg)
+            note["turns"].append(agent_turn)
             self.storage.save_session_note(session_id, note)
-            return {
+            tail = transcript_tail(note["turns"], n=5)
+
+            rich = {
+                "agent_turn": agent_turn,
+                "user_turn": user_turn,
+                "transcript_tail": tail,
+                "safety_banner": safety_payload,
+                "display_delay_ms": display_delay_ms,
+            }
+            legacy = {
                 "session_id": session_id,
-                "message": completion_msg["text"],
+                "message": agent_turn["text"],
                 "red_flags": red_flags,
                 "redactions": redactions,
                 "structured": note["structured"],
                 "complete": True,
             }
+            legacy.update(rich)
+            return legacy
 
 
 class ClinicalAgent:

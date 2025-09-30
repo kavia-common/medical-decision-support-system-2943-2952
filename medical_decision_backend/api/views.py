@@ -31,18 +31,42 @@ def health(request):
     method='post',
     operation_id='chat',
     operation_summary='Chat with PatientAgent',
-    operation_description='Send a message to the PatientAgent to collect structured patient information. Applies PHI redaction and detects red flags.',
+    operation_description=(
+        'Send a message to the PatientAgent to collect structured patient information. '
+        'The agent responds with a conversational acknowledgment, optional safety banner if red-flags are detected, '
+        'suggestion chips, hint text, and the next question. The response preserves legacy fields for backward compatibility.'
+    ),
     request_body=ChatRequestSerializer,
     responses={
         200: openapi.Response(description="Chat response", examples={
             "application/json": {
                 "session_id": "uuid",
-                "message": "Next question or completion message",
-                "next_key": "chief_complaint",
+                "message": "Thanks, I noted your cough. When did it start, and has it changed over time?",
+                "next_key": "onset",
                 "red_flags": [],
                 "redactions": [],
-                "structured": {},
-                "complete": False
+                "structured": {"chief_complaint": "cough"},
+                "complete": False,
+                "agent_turn": {
+                    "from": "agent",
+                    "role": "assistant",
+                    "type": "question",
+                    "text": "Thanks, I noted your cough. When did it start, and has it changed over time?",
+                    "key": "onset",
+                    "suggestions": ["Today", "Yesterday", "Last week", "A month ago"],
+                    "hints": "You can say 'yesterday', '3 days ago', or a date."
+                },
+                "user_turn": {
+                    "from": "user",
+                    "type": "message",
+                    "text": "I have a cough",
+                    "redactions": [],
+                    "red_flags": []
+                },
+                "transcript_tail": [],
+                "safety_banner": None,
+                "display_delay_ms": 550,
+                "theme": OCEAN_THEME
             }
         })
     },
@@ -52,11 +76,19 @@ def health(request):
 def chat_view(request):
     """
     Chat with PatientAgent.
+
     Parameters:
       - session_id (optional): If omitted, a new session is created.
       - message: User's input text.
+
     Returns:
-      - JSON containing session_id, agent's next question or completion, structured fields, red flags, and redactions.
+      Rich chat payload with:
+      - agent_turn: {from, role, type, text, key, suggestions, hints}
+      - user_turn: {text, redactions, red_flags}
+      - transcript_tail: previous 3-5 turns for context
+      - safety_banner: safety notice when red flags are detected or null
+      - display_delay_ms: UI typing simulation hint
+      Plus legacy fields for backward compatibility: message, next_key, structured, red_flags, redactions, complete.
     """
     serializer = ChatRequestSerializer(data=request.data)
     if not serializer.is_valid():
