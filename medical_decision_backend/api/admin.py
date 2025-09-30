@@ -1,3 +1,2 @@
-from django.contrib import admin
-
-# Register your models here.
+# Admin site registrations for models (none currently).
+# This file intentionally left minimal to satisfy linters.
