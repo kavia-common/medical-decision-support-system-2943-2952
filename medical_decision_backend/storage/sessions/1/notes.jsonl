@@ -1,0 +1,60 @@
+{
+  "session_id": "1",
+  "turns": [
+    {
+      "from": "user",
+      "text": "Having cough and cold",
+      "timestamp": "2025-09-30T08:18:36.771783Z",
+      "redactions": []
+    },
+    {
+      "from": "agent",
+      "type": "question",
+      "key": "chief_complaint",
+      "text": "What is your main concern today?",
+      "timestamp": "2025-09-30T08:18:36.771796Z"
+    }
+  ],
+  "structured": {},
+  "timestamp": "2025-09-30T08:18:36.771978Z"
+}
+{
+  "session_id": "1",
+  "turns": [
+    {
+      "from": "user",
+      "text": "Having cough and cold",
+      "timestamp": "2025-09-30T08:22:45.984443Z",
+      "redactions": []
+    },
+    {
+      "from": "agent",
+      "type": "question",
+      "key": "chief_complaint",
+      "text": "What is your main concern today?",
+      "timestamp": "2025-09-30T08:22:45.984455Z"
+    }
+  ],
+  "structured": {},
+  "timestamp": "2025-09-30T08:22:45.984503Z"
+}
+{
+  "session_id": "1",
+  "turns": [
+    {
+      "from": "user",
+      "text": "My name is Nilesh",
+      "timestamp": "2025-09-30T08:23:31.527793Z",
+      "redactions": []
+    },
+    {
+      "from": "agent",
+      "type": "question",
+      "key": "chief_complaint",
+      "text": "What is your main concern today?",
+      "timestamp": "2025-09-30T08:23:31.527805Z"
+    }
+  ],
+  "structured": {},
+  "timestamp": "2025-09-30T08:23:31.527843Z"
+}
